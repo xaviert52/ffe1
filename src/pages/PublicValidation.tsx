@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -25,6 +25,19 @@ const STEPS = [
   { label: 'Finalización', icon: CheckCircle2 },
 ];
 
+const API_BASE = 'http://localhost:3001/api/validation';
+
+const logStep = async (sessionId: string, stepName: string, status: string, data: any = {}) => {
+  if (!sessionId) return;
+  try {
+    await fetch(`${API_BASE}/step/${stepName}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sessionId, status, data })
+    });
+  } catch (e) {}
+};
+
 const StepIndicator = ({ currentStep }: { currentStep: number }) => (
   <div className="flex items-center justify-center gap-1 mb-8">
     {STEPS.map((step, i) => (
@@ -50,9 +63,19 @@ const StepIndicator = ({ currentStep }: { currentStep: number }) => (
 );
 
 // Step 1: Documents
-const StepDocuments = ({ onNext, onReject }: { onNext: () => void; onReject: () => void }) => {
+const StepDocuments = ({ sessionId, onNext, onReject }: { sessionId: string; onNext: () => void; onReject: () => void }) => {
   const [acceptTerms, setAcceptTerms] = useState(false);
   const [acceptRead, setAcceptRead] = useState(false);
+
+  const handleNext = async () => {
+    await logStep(sessionId, 'documents', 'success', { acceptTerms, acceptRead });
+    onNext();
+  };
+
+  const handleReject = async () => {
+    await logStep(sessionId, 'documents', 'abandoned', { reason: 'User rejected terms' });
+    onReject();
+  };
 
   return (
     <div className="space-y-6 animate-fade-in">
@@ -79,8 +102,8 @@ const StepDocuments = ({ onNext, onReject }: { onNext: () => void; onReject: () 
         </label>
       </div>
       <div className="flex gap-3">
-        <Button variant="outline" onClick={onReject} className="flex-1">Rechazar</Button>
-        <Button onClick={onNext} disabled={!acceptTerms || !acceptRead} className="flex-1">
+        <Button variant="outline" onClick={handleReject} className="flex-1">Rechazar</Button>
+        <Button onClick={handleNext} disabled={!acceptTerms || !acceptRead} className="flex-1">
           Continuar <ArrowRight className="ml-2 h-4 w-4" />
         </Button>
       </div>
@@ -89,15 +112,21 @@ const StepDocuments = ({ onNext, onReject }: { onNext: () => void; onReject: () 
 };
 
 // Step 2: Fingerprint Code
-const StepFingerprint = ({ onNext, onBack }: { onNext: () => void; onBack: () => void }) => {
+const StepFingerprint = ({ sessionId, onNext, onBack }: { sessionId: string; onNext: () => void; onBack: () => void }) => {
   const [code, setCode] = useState('');
   const [status, setStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
 
-  const validate = () => {
+  const validate = async () => {
     setStatus('loading');
-    setTimeout(() => {
-      if (code.length === 10) setStatus('success');
-      else setStatus('error');
+    // Mismo mock de UI, pero ahora enviamos la data a api local
+    setTimeout(async () => {
+      if (code.length === 10) {
+        setStatus('success');
+        await logStep(sessionId, 'fingerprint', 'success', { code });
+      } else {
+        setStatus('error');
+        await logStep(sessionId, 'fingerprint', 'error', { code });
+      }
     }, 1200);
   };
 
@@ -136,14 +165,14 @@ const StepFingerprint = ({ onNext, onBack }: { onNext: () => void; onBack: () =>
 };
 
 // Step 3: OTP
-const StepOTP = ({ onNext, onBack }: { onNext: () => void; onBack: () => void }) => {
+const StepOTP = ({ sessionId, onNext, onBack }: { sessionId: string; onNext: () => void; onBack: () => void }) => {
   const [otp, setOtp] = useState('');
   const [sent, setSent] = useState(false);
   const [verified, setVerified] = useState(false);
   const [timer, setTimer] = useState(0);
   const [attempts, setAttempts] = useState(0);
 
-  const sendOtp = () => {
+  const sendOtp = async () => {
     setSent(true);
     setTimer(30);
     const interval = setInterval(() => {
@@ -152,11 +181,17 @@ const StepOTP = ({ onNext, onBack }: { onNext: () => void; onBack: () => void })
         return t - 1;
       });
     }, 1000);
+    await logStep(sessionId, 'otp_request', 'info', { attempts });
   };
 
-  const verifyOtp = () => {
-    if (otp === '123456') setVerified(true);
-    else setAttempts((a) => a + 1);
+  const verifyOtp = async () => {
+    if (otp === '123456') {
+      setVerified(true);
+      await logStep(sessionId, 'otp_verify', 'success', { otp, attempts });
+    } else {
+      setAttempts((a) => a + 1);
+      await logStep(sessionId, 'otp_verify', 'failed', { otp, attempts: attempts + 1 });
+    }
   };
 
   return (
@@ -197,14 +232,17 @@ const StepOTP = ({ onNext, onBack }: { onNext: () => void; onBack: () => void })
 };
 
 // Step 4: Biometric
-const StepBiometric = ({ onNext, onBack }: { onNext: () => void; onBack: () => void }) => {
+const StepBiometric = ({ sessionId, onNext, onBack }: { sessionId: string; onNext: () => void; onBack: () => void }) => {
   const [status, setStatus] = useState<'idle' | 'capturing' | 'processing' | 'success' | 'error'>('idle');
 
   const capture = () => {
     setStatus('capturing');
     setTimeout(() => {
       setStatus('processing');
-      setTimeout(() => setStatus('success'), 1500);
+      setTimeout(async () => {
+          setStatus('success');
+          await logStep(sessionId, 'biometric', 'success');
+      }, 1500);
     }, 2000);
   };
 
@@ -261,18 +299,31 @@ const StepBiometric = ({ onNext, onBack }: { onNext: () => void; onBack: () => v
 };
 
 // Step 5: Completion
-const StepCompletion = () => (
-  <div className="text-center space-y-6 py-8 animate-scale-in">
-    <div className="h-20 w-20 rounded-full bg-success/15 flex items-center justify-center mx-auto">
-      <CheckCircle2 className="h-10 w-10 text-success" />
+const StepCompletion = ({ sessionId }: { sessionId: string }) => {
+  useEffect(() => {
+    if (sessionId) {
+      logStep(sessionId, 'completion', 'success', { message: 'All steps completed' });
+      fetch(`${API_BASE}/close`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sessionId, status: 'completed' })
+      }).catch(console.error);
+    }
+  }, [sessionId]);
+
+  return (
+    <div className="text-center space-y-6 py-8 animate-scale-in">
+      <div className="h-20 w-20 rounded-full bg-success/15 flex items-center justify-center mx-auto">
+        <CheckCircle2 className="h-10 w-10 text-success" />
+      </div>
+      <div>
+        <h2 className="text-2xl font-heading font-bold text-foreground">¡Proceso Completado!</h2>
+        <p className="text-muted-foreground mt-2">Gracias por utilizar nuestro servicio de validación.</p>
+        <p className="text-sm text-muted-foreground mt-1">Su identidad ha sido verificada exitosamente.</p>
+      </div>
     </div>
-    <div>
-      <h2 className="text-2xl font-heading font-bold text-foreground">¡Proceso Completado!</h2>
-      <p className="text-muted-foreground mt-2">Gracias por utilizar nuestro servicio de validación.</p>
-      <p className="text-sm text-muted-foreground mt-1">Su identidad ha sido verificada exitosamente.</p>
-    </div>
-  </div>
-);
+  );
+};
 
 // Rejection Modal
 const RejectionScreen = () => (
@@ -286,6 +337,28 @@ const RejectionScreen = () => (
 const PublicValidation = () => {
   const [step, setStep] = useState(0);
   const [rejected, setRejected] = useState(false);
+  const [sessionId, setSessionId] = useState('');
+
+  useEffect(() => {
+    // Iniciar flujo comunicando con microbackend FFE1
+    fetch(`${API_BASE}/start`, { method: 'POST' })
+      .then(res => res.json())
+      .then(data => {
+        if (data.sessionId) setSessionId(data.sessionId);
+      })
+      .catch(console.error);
+  }, []);
+
+  const handleReject = () => {
+    setRejected(true);
+    if (sessionId) {
+      fetch(`${API_BASE}/close`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sessionId, status: 'abandoned', reason: 'User exited flow early' })
+      }).catch(console.error);
+    }
+  };
 
   if (rejected) {
     return (
@@ -306,11 +379,11 @@ const PublicValidation = () => {
           <StepIndicator currentStep={step} />
           <Card className="border-border shadow-lg">
             <CardContent className="p-6">
-              {step === 0 && <StepDocuments onNext={() => setStep(1)} onReject={() => setRejected(true)} />}
-              {step === 1 && <StepFingerprint onNext={() => setStep(2)} onBack={() => setStep(0)} />}
-              {step === 2 && <StepOTP onNext={() => setStep(3)} onBack={() => setStep(1)} />}
-              {step === 3 && <StepBiometric onNext={() => setStep(4)} onBack={() => setStep(2)} />}
-              {step === 4 && <StepCompletion />}
+              {step === 0 && <StepDocuments sessionId={sessionId} onNext={() => setStep(1)} onReject={handleReject} />}
+              {step === 1 && <StepFingerprint sessionId={sessionId} onNext={() => setStep(2)} onBack={() => setStep(0)} />}
+              {step === 2 && <StepOTP sessionId={sessionId} onNext={() => setStep(3)} onBack={() => setStep(1)} />}
+              {step === 3 && <StepBiometric sessionId={sessionId} onNext={() => setStep(4)} onBack={() => setStep(2)} />}
+              {step === 4 && <StepCompletion sessionId={sessionId} />}
             </CardContent>
           </Card>
           <p className="text-xs text-muted-foreground text-center mt-4">
